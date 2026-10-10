@@ -1,0 +1,709 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#256E47">
+<meta name="description" content="Lista de compras por voz o texto, con control visual de lo comprado.">
+<title>Lista de Compras</title>
+<link rel="manifest" href="./manifest.webmanifest">
+<link rel="icon" href="./icon-192.png" type="image/png">
+<link rel="apple-touch-icon" href="./icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Compras">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Public+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  /* ---------------------------------------------------------------
+     Design plan
+     Subject: a personal grocery/shopping checklist, dictated or typed,
+     items sink to the bottom once bought but stay visible for control.
+     Layout: single sticky capture bar (type / dictate) over a scrolling
+     list; state is encoded in color + position, not just a checkbox.
+     Color:  --bg, --surface, --fg, --muted, --accent (fresh green),
+             --accent-ink, --done-bg, --done-fg, --danger
+     Type:   display = Bricolage Grotesque (headings, counts)
+             body    = Public Sans (items, UI, data)
+  ----------------------------------------------------------------*/
+  :root {
+    --bg: #F4F7F2;
+    --surface: #FFFFFF;
+    --surface-2: #EEF3EC;
+    --fg: #1E2B22;
+    --muted: #677568;
+    --border: #DCE5D9;
+    --accent: #256E47;
+    --accent-ink: #184E32;
+    --accent-soft: #E3F0E7;
+    --done-bg: #EAF3EB;
+    --done-fg: #5C7262;
+    --danger: #B3432B;
+    --danger-soft: #F7E7E2;
+    --shadow: 0 1px 2px rgba(30,43,34,.06), 0 6px 16px rgba(30,43,34,.07);
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #12170F;
+      --surface: #1B2317;
+      --surface-2: #212B1D;
+      --fg: #EAF1E7;
+      --muted: #9AAB98;
+      --border: #2B362B;
+      --accent: #58B57F;
+      --accent-ink: #DDF2E4;
+      --accent-soft: #223126;
+      --done-bg: #1D2A20;
+      --done-fg: #7E9480;
+      --danger: #E28368;
+      --danger-soft: #2E211D;
+      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 20px rgba(0,0,0,.35);
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #12170F;
+    --surface: #1B2317;
+    --surface-2: #212B1D;
+    --fg: #EAF1E7;
+    --muted: #9AAB98;
+    --border: #2B362B;
+    --accent: #58B57F;
+    --accent-ink: #DDF2E4;
+    --accent-soft: #223126;
+    --done-bg: #1D2A20;
+    --done-fg: #7E9480;
+    --danger: #E28368;
+    --danger-soft: #2E211D;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 20px rgba(0,0,0,.35);
+    color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: "Public Sans", system-ui, -apple-system, sans-serif;
+    display: flex;
+    flex-direction: column;
+    min-height: 100%;
+  }
+
+  h1, .display {
+    font-family: "Bricolage Grotesque", "Public Sans", system-ui, sans-serif;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    text-wrap: balance;
+  }
+
+  /* ---------- Top bar ---------- */
+  header {
+    position: sticky;
+    top: env(safe-area-inset-top, 0px);
+    z-index: 5;
+    background: var(--bg);
+    padding: calc(16px + env(safe-area-inset-top, 0px)) 18px 10px;
+    border-bottom: 1px solid var(--border);
+  }
+  .title-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+  }
+  h1 {
+    font-size: 1.5rem;
+    margin: 0;
+  }
+  .counts {
+    font-size: .8rem;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .counts b { color: var(--fg); font-weight: 600; }
+
+  #install-btn {
+    display: none;
+    align-items: center;
+    gap: 6px;
+    margin-top: 10px;
+    padding: 8px 12px;
+    border-radius: 10px;
+    border: 1px solid var(--accent);
+    background: var(--accent-soft);
+    color: var(--accent-ink);
+    font: inherit;
+    font-size: .82rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  #install-btn.show { display: inline-flex; }
+  #install-btn svg { width: 15px; height: 15px; }
+
+  /* ---------- Capture bar ---------- */
+  .capture {
+    display: flex;
+    gap: 8px;
+    padding: 12px 18px;
+    background: var(--bg);
+    position: sticky;
+    top: calc(78px + env(safe-area-inset-top, 0px));
+    z-index: 4;
+    border-bottom: 1px solid var(--border);
+  }
+  .capture-field {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    box-shadow: var(--shadow);
+    padding: 2px 4px 2px 14px;
+  }
+  .capture-field input {
+    flex: 1;
+    min-width: 0;
+    border: none;
+    outline: none;
+    background: transparent;
+    color: var(--fg);
+    font: inherit;
+    font-size: 1rem;
+    padding: 12px 6px;
+  }
+  .capture-field input::placeholder { color: var(--muted); }
+
+  button.icon-btn {
+    border: none;
+    background: transparent;
+    color: var(--muted);
+    width: 40px;
+    height: 40px;
+    border-radius: 10px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    flex: 0 0 auto;
+  }
+  button.icon-btn:hover { background: var(--surface-2); color: var(--fg); }
+  button.icon-btn svg { width: 20px; height: 20px; }
+
+  #mic-btn {
+    flex: 0 0 auto;
+    width: 48px;
+    height: 48px;
+    border-radius: 14px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--accent);
+    box-shadow: var(--shadow);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+  }
+  #mic-btn svg { width: 21px; height: 21px; }
+  #mic-btn.listening {
+    background: var(--accent);
+    color: #fff;
+    border-color: var(--accent);
+    animation: pulse 1.3s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 45%, transparent); }
+    50% { box-shadow: 0 0 0 10px color-mix(in srgb, var(--accent) 0%, transparent); }
+  }
+  #mic-status {
+    font-size: .76rem;
+    color: var(--accent);
+    padding: 0 18px 2px;
+    min-height: 1.1em;
+  }
+
+  /* ---------- List ---------- */
+  main {
+    flex: 1;
+    padding: 6px 18px calc(28px + env(safe-area-inset-bottom, 0px));
+    max-width: 640px;
+    width: 100%;
+    margin: 0 auto;
+  }
+  ul#list {
+    list-style: none;
+    margin: 10px 0 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  li.item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--accent);
+    border-radius: 12px;
+    padding: 13px 10px 13px 14px;
+    box-shadow: var(--shadow);
+    transition: background .18s ease, border-color .18s ease, opacity .18s ease;
+  }
+  li.item.done {
+    background: var(--done-bg);
+    border-left-color: var(--done-fg);
+    box-shadow: none;
+  }
+
+  .check {
+    flex: 0 0 auto;
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    border: 2px solid var(--accent);
+    background: var(--surface);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+  }
+  .check svg { width: 14px; height: 14px; opacity: 0; transition: opacity .15s ease; }
+  li.item.done .check {
+    background: var(--done-fg);
+    border-color: var(--done-fg);
+  }
+  li.item.done .check svg { opacity: 1; }
+  .check svg { stroke: #fff; }
+
+  .item-text {
+    flex: 1;
+    min-width: 0;
+    font-size: 1.02rem;
+    font-weight: 500;
+    word-break: break-word;
+    color: var(--fg);
+  }
+  li.item.done .item-text {
+    color: var(--done-fg);
+    text-decoration: line-through;
+    text-decoration-thickness: 1.5px;
+    font-weight: 400;
+  }
+
+  .remove-btn {
+    flex: 0 0 auto;
+    width: 32px;
+    height: 32px;
+    border-radius: 9px;
+    border: none;
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .remove-btn:hover { background: var(--danger-soft); color: var(--danger); }
+  .remove-btn svg { width: 17px; height: 17px; }
+
+  .section-label {
+    font-size: .74rem;
+    font-weight: 600;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 18px 2px 2px;
+  }
+
+  .empty {
+    margin-top: 48px;
+    text-align: center;
+    color: var(--muted);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+  }
+  .empty svg { width: 46px; height: 46px; opacity: .55; }
+  .empty p { margin: 0; font-size: .92rem; max-width: 26ch; }
+
+  .clear-done {
+    display: block;
+    margin: 18px auto 0;
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    font: inherit;
+    font-size: .82rem;
+    font-weight: 600;
+    padding: 9px 16px;
+    border-radius: 10px;
+    cursor: pointer;
+  }
+  .clear-done:hover { color: var(--danger); border-color: var(--danger); }
+
+  /* toast (undo) */
+  #toast {
+    position: fixed;
+    left: 50%;
+    bottom: calc(22px + env(safe-area-inset-bottom, 0px));
+    transform: translate(-50%, 12px);
+    background: var(--accent-ink);
+    color: #fff;
+    padding: 11px 16px;
+    border-radius: 11px;
+    font-size: .86rem;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    box-shadow: 0 8px 22px rgba(0,0,0,.25);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .18s ease, transform .18s ease;
+    z-index: 20;
+  }
+  #toast.show { opacity: 1; transform: translate(-50%, 0); pointer-events: auto; }
+  #toast button {
+    background: none;
+    border: none;
+    color: #fff;
+    font: inherit;
+    font-weight: 700;
+    text-decoration: underline;
+    cursor: pointer;
+    padding: 0;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    #mic-btn.listening { animation: none; }
+    * { transition: none !important; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="title-row">
+    <h1 class="display">Lista de Compras</h1>
+    <div class="counts" id="counts">0 pendientes</div>
+  </div>
+  <button id="install-btn" type="button">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0l-4-4m4 4l4-4"/><path d="M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2"/></svg>
+    Instalar la app
+  </button>
+</header>
+
+<div class="capture">
+  <div class="capture-field">
+    <input id="item-input" type="text" placeholder="Escribí un producto…" autocomplete="off" enterkeyhint="done">
+    <button class="icon-btn" id="add-btn" type="button" aria-label="Agregar producto">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+    </button>
+  </div>
+  <button id="mic-btn" type="button" aria-label="Dictar producto por voz">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="9" y="2" width="6" height="12" rx="3"/>
+      <path d="M5 11a7 7 0 0014 0M12 18v4M8 22h8"/>
+    </svg>
+  </button>
+</div>
+<div id="mic-status"></div>
+
+<main>
+  <ul id="list"></ul>
+  <div class="empty" id="empty-state" hidden>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M4 7h16l-1.5 11a2 2 0 01-2 1.8H7.5a2 2 0 01-2-1.8L4 7z"/>
+      <path d="M8 7V5a4 4 0 018 0v2"/>
+    </svg>
+    <p>Tu lista está vacía. Dictá o escribí el primer producto para empezar.</p>
+  </div>
+  <button class="clear-done" id="clear-done-btn" hidden type="button">Borrar los comprados</button>
+</main>
+
+<div id="toast"><span id="toast-msg"></span><button id="toast-undo" type="button">Deshacer</button></div>
+
+<script>
+(function () {
+  "use strict";
+
+  var STORAGE_KEY = "lista-compras-v1";
+  var listEl = document.getElementById("list");
+  var emptyEl = document.getElementById("empty-state");
+  var countsEl = document.getElementById("counts");
+  var inputEl = document.getElementById("item-input");
+  var addBtn = document.getElementById("add-btn");
+  var micBtn = document.getElementById("mic-btn");
+  var micStatus = document.getElementById("mic-status");
+  var clearDoneBtn = document.getElementById("clear-done-btn");
+  var toastEl = document.getElementById("toast");
+  var toastMsg = document.getElementById("toast-msg");
+  var toastUndo = document.getElementById("toast-undo");
+
+  /* ---------- state ---------- */
+  var items = loadItems();
+  var toastTimer = null;
+  var lastRemoved = null; // {item, index}
+
+  function loadItems() {
+    try {
+      var raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return [];
+      var parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (e) { return []; }
+  }
+
+  function saveItems() {
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(items)); } catch (e) {}
+  }
+
+  function uid() {
+    return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+  }
+
+  function capitalize(s) {
+    return s.charAt(0).toUpperCase() + s.slice(1);
+  }
+
+  function addItem(text) {
+    var clean = text.trim().replace(/\s+/g, " ");
+    if (!clean) return;
+    items.push({ id: uid(), text: capitalize(clean), done: false, addedAt: Date.now() });
+    saveItems();
+    render();
+  }
+
+  function addMany(text) {
+    // split dictated or typed text into separate products on commas / " y "
+    var parts = text.split(/,| y (?=\S)/i).map(function (s) { return s.trim(); }).filter(Boolean);
+    if (parts.length === 0) return;
+    parts.forEach(addItem);
+  }
+
+  function toggleDone(id) {
+    var it = items.find(function (i) { return i.id === id; });
+    if (!it) return;
+    it.done = !it.done;
+    it.doneAt = it.done ? Date.now() : null;
+    saveItems();
+    render();
+  }
+
+  function removeItem(id) {
+    var idx = items.findIndex(function (i) { return i.id === id; });
+    if (idx === -1) return;
+    lastRemoved = { item: items[idx], index: idx };
+    items.splice(idx, 1);
+    saveItems();
+    render();
+    showToast("Producto borrado", restoreLast);
+  }
+
+  function restoreLast() {
+    if (!lastRemoved) return;
+    var at = Math.min(lastRemoved.index, items.length);
+    items.splice(at, 0, lastRemoved.item);
+    lastRemoved = null;
+    saveItems();
+    render();
+    hideToast();
+  }
+
+  function clearDone() {
+    var removed = items.filter(function (i) { return i.done; });
+    if (removed.length === 0) return;
+    items = items.filter(function (i) { return !i.done; });
+    lastRemoved = { bulk: removed };
+    saveItems();
+    render();
+    showToast(removed.length + (removed.length === 1 ? " producto borrado" : " productos borrados"), function () {
+      items = items.concat(lastRemoved.bulk);
+      lastRemoved = null;
+      saveItems();
+      render();
+      hideToast();
+    });
+  }
+
+  function showToast(msg, onUndo) {
+    clearTimeout(toastTimer);
+    toastMsg.textContent = msg;
+    toastEl.classList.add("show");
+    toastUndo.onclick = onUndo;
+    toastTimer = setTimeout(hideToast, 5000);
+  }
+  function hideToast() {
+    toastEl.classList.remove("show");
+    clearTimeout(toastTimer);
+  }
+
+  function svgCheck() {
+    return '<svg viewBox="0 0 24 24" fill="none" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"/></svg>';
+  }
+  function svgTrash() {
+    return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V5a2 2 0 012-2h2a2 2 0 012 2v2m-7 0l1 13a2 2 0 002 2h4a2 2 0 002-2l1-13"/></svg>';
+  }
+
+  function render() {
+    var pending = items.filter(function (i) { return !i.done; }).sort(function (a, b) { return a.addedAt - b.addedAt; });
+    var done = items.filter(function (i) { return i.done; }).sort(function (a, b) { return (a.doneAt || 0) - (b.doneAt || 0); });
+
+    listEl.innerHTML = "";
+
+    if (items.length === 0) {
+      emptyEl.hidden = false;
+    } else {
+      emptyEl.hidden = true;
+      pending.concat(done).forEach(function (it) {
+        listEl.appendChild(renderItem(it));
+      });
+    }
+
+    clearDoneBtn.hidden = done.length === 0;
+    countsEl.innerHTML = pending.length + " pendiente" + (pending.length === 1 ? "" : "s") +
+      (done.length ? ' · <b>' + done.length + "</b> comprado" + (done.length === 1 ? "" : "s") : "");
+  }
+
+  function renderItem(it) {
+    var li = document.createElement("li");
+    li.className = "item" + (it.done ? " done" : "");
+    li.dataset.id = it.id;
+
+    var check = document.createElement("button");
+    check.className = "check";
+    check.type = "button";
+    check.setAttribute("aria-label", it.done ? "Marcar como pendiente" : "Marcar como comprado");
+    check.innerHTML = svgCheck();
+    check.addEventListener("click", function () { toggleDone(it.id); });
+
+    var span = document.createElement("span");
+    span.className = "item-text";
+    span.textContent = it.text;
+    span.addEventListener("click", function () { toggleDone(it.id); });
+
+    var del = document.createElement("button");
+    del.className = "remove-btn";
+    del.type = "button";
+    del.setAttribute("aria-label", "Borrar " + it.text);
+    del.innerHTML = svgTrash();
+    del.addEventListener("click", function (e) {
+      e.stopPropagation();
+      removeItem(it.id);
+    });
+
+    li.appendChild(check);
+    li.appendChild(span);
+    li.appendChild(del);
+    return li;
+  }
+
+  /* ---------- capture ---------- */
+  function submitInput() {
+    var val = inputEl.value;
+    if (!val.trim()) return;
+    addMany(val);
+    inputEl.value = "";
+    inputEl.focus();
+  }
+  addBtn.addEventListener("click", submitInput);
+  inputEl.addEventListener("keydown", function (e) {
+    if (e.key === "Enter") { e.preventDefault(); submitInput(); }
+  });
+  clearDoneBtn.addEventListener("click", clearDone);
+
+  /* ---------- voice dictation ---------- */
+  var SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  var recog = null;
+  var listening = false;
+
+  if (SpeechRecognition) {
+    recog = new SpeechRecognition();
+    recog.lang = "es-AR";
+    recog.continuous = false;
+    recog.interimResults = true;
+    recog.maxAlternatives = 1;
+
+    recog.onstart = function () {
+      listening = true;
+      micBtn.classList.add("listening");
+      micStatus.textContent = "Escuchando… decí el producto";
+    };
+    recog.onresult = function (event) {
+      var text = "";
+      for (var i = 0; i < event.results.length; i++) {
+        text += event.results[i][0].transcript;
+      }
+      inputEl.value = text;
+      if (event.results[event.results.length - 1].isFinal) {
+        addMany(text);
+        inputEl.value = "";
+      }
+    };
+    recog.onerror = function (event) {
+      if (event.error === "not-allowed" || event.error === "service-not-allowed") {
+        micStatus.textContent = "Sin permiso de micrófono. Habilitalo para el sitio en Chrome.";
+      } else if (event.error === "no-speech") {
+        micStatus.textContent = "No se escuchó nada. Probá de nuevo.";
+      } else {
+        micStatus.textContent = "No se pudo usar el micrófono (" + event.error + ").";
+      }
+    };
+    recog.onend = function () {
+      listening = false;
+      micBtn.classList.remove("listening");
+      if (!micStatus.textContent.startsWith("Sin permiso") && !micStatus.textContent.startsWith("No se pudo")) {
+        setTimeout(function () { micStatus.textContent = ""; }, 1600);
+      }
+    };
+
+    micBtn.addEventListener("click", function () {
+      if (listening) { recog.stop(); return; }
+      try { recog.start(); } catch (e) {}
+    });
+  } else {
+    micBtn.disabled = true;
+    micBtn.style.opacity = ".4";
+    micBtn.title = "Dictado por voz no disponible en este navegador";
+  }
+
+  /* ---------- install prompt ---------- */
+  var installBtn = document.getElementById("install-btn");
+  var deferredPrompt = null;
+  window.addEventListener("beforeinstallprompt", function (e) {
+    e.preventDefault();
+    deferredPrompt = e;
+    installBtn.classList.add("show");
+  });
+  installBtn.addEventListener("click", function () {
+    if (!deferredPrompt) return;
+    deferredPrompt.prompt();
+    deferredPrompt.userChoice.finally(function () {
+      deferredPrompt = null;
+      installBtn.classList.remove("show");
+    });
+  });
+  window.addEventListener("appinstalled", function () {
+    installBtn.classList.remove("show");
+  });
+
+  /* ---------- service worker (best effort; needs http(s)/localhost) ---------- */
+  if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost")) {
+    window.addEventListener("load", function () {
+      navigator.serviceWorker.register("./sw.js").catch(function () {});
+    });
+  }
+
+  render();
+})();
+</script>
+</body>
+</html>
