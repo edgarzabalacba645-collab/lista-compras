@@ -332,8 +332,11 @@
     align-items: center;
     gap: 10px;
   }
+  .empty[hidden] { display: none; }
   .empty svg { width: 46px; height: 46px; opacity: .55; }
   .empty p { margin: 0; font-size: .92rem; max-width: 26ch; }
+
+  .section-label:first-child { margin-top: 2px; }
 
   .clear-done {
     display: block;
@@ -474,6 +477,68 @@
     return s.charAt(0).toUpperCase() + s.slice(1);
   }
 
+  /* ---------- clasificación por rubro ---------- */
+  var CATEGORIES = [
+    { name: "Verdulería", keywords: [
+      "cebolla","zanahoria","papa","patata","tomate","lechuga","zapallo","zapallito","calabaza",
+      "berenjena","pimiento","morron","morrón","ajo","limon","limón","manzana","banana","platano","plátano",
+      "pera","naranja","mandarina","frutilla","uva","palta","apio","acelga","espinaca","choclo",
+      "batata","remolacha","rucula","rúcula","perejil","cilantro","coriandro","kiwi","durazno",
+      "sandia","sandía","melon","melón","anana","ananá","piña","pina","ciruela","pepino","brocoli","brócoli",
+      "coliflor","champignon","champiñon","hongo","jengibre","repollo","chaucha","puerro","hierba","albahaca"
+    ]},
+    { name: "Carnicería", keywords: [
+      "carne","pollo","pechuga","milanesa","asado","matambre","bife","nalga","cuadril","peceto",
+      "pata muslo","patamuslo","chorizo","morcilla","pescado","merluza","salmon","salmón","atun","atún",
+      "cerdo","costilla","costeleta","hamburguesa","vacio","vacío","entraña","entrana","picada","picado",
+      "salchicha","jamon","jamón","mortadela","salame","salamin","salamín","fiambre","panceta"
+    ]},
+    { name: "Panadería", keywords: [
+      "pan","factura","facturas","bizcocho","tostada","lactal","pan de hamburguesa","pan de molde",
+      "pandulce","pan dulce","prepizza","pre pizza","medialuna","medialunas","grisin","grisín","galleta de agua"
+    ]},
+    { name: "Lácteos", keywords: [
+      "leche","yogur","yogurt","queso","manteca","crema","dulce de leche","ricota","muzzarella",
+      "mozzarella","huevo","huevos","margarina"
+    ]},
+    { name: "Bebidas", keywords: [
+      "agua","gaseosa","coca","sprite","fanta","jugo","cerveza","vino","soda","energizante","isotonica","isotónica"
+    ]},
+    { name: "Almacén", keywords: [
+      "fideos","arroz","harina","azucar","azúcar","sal","aceite","vinagre","polenta","lenteja","lentejas",
+      "garbanzo","garbanzos","poroto","porotos","arveja","arvejas","pure de tomate","puré de tomate",
+      "salsa","mayonesa","mostaza","ketchup","cafe","café","te","té","yerba","galletita","galletitas",
+      "pan rallado","conserva","enlatado","lata","snack","snacks","papas fritas","chocolate","caramelo",
+      "alfajor","alfajores","mermelada","miel","cereal","cereales","avena","aderezo","sopa","caldo"
+    ]},
+    { name: "Limpieza e higiene", keywords: [
+      "detergente","lavandina","jabon","jabón","shampoo","champu","champú","papel higienico","papel higiénico",
+      "servilleta","servilletas","esponja","suavizante","desodorante","pasta dental","dentifrico","dentífrico",
+      "rollo de cocina","lavavajilla","lavavajillas","cepillo de dientes","toallita","toallitas","alcohol en gel",
+      "perfumina","limpiador","insecticida","pañal","pañales"
+    ]}
+  ];
+  var OTHER_CATEGORY = "Otros";
+
+  function normalize(s) {
+    return s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+  }
+
+  function classify(text) {
+    var norm = normalize(text);
+    for (var c = 0; c < CATEGORIES.length; c++) {
+      var kws = CATEGORIES[c].keywords;
+      for (var k = 0; k < kws.length; k++) {
+        var kw = normalize(kws[k]);
+        var re = new RegExp("\\b" + kw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\b");
+        if (re.test(norm)) return CATEGORIES[c].name;
+      }
+    }
+    return OTHER_CATEGORY;
+  }
+
+  var CATEGORY_ORDER = CATEGORIES.map(function (c) { return c.name; }).concat([OTHER_CATEGORY]);
+
   function addItem(text) {
     var clean = text.trim().replace(/\s+/g, " ");
     if (!clean) return;
@@ -563,14 +628,40 @@
       emptyEl.hidden = false;
     } else {
       emptyEl.hidden = true;
-      pending.concat(done).forEach(function (it) {
-        listEl.appendChild(renderItem(it));
+
+      // agrupar pendientes por rubro, respetando el orden fijo de categorías
+      var groups = {};
+      pending.forEach(function (it) {
+        var cat = classify(it.text);
+        if (!groups[cat]) groups[cat] = [];
+        groups[cat].push(it);
       });
+      CATEGORY_ORDER.forEach(function (cat) {
+        if (!groups[cat] || groups[cat].length === 0) return;
+        listEl.appendChild(renderSectionLabel(cat, groups[cat].length));
+        groups[cat].forEach(function (it) {
+          listEl.appendChild(renderItem(it));
+        });
+      });
+
+      if (done.length) {
+        listEl.appendChild(renderSectionLabel("Comprado", done.length));
+        done.forEach(function (it) {
+          listEl.appendChild(renderItem(it));
+        });
+      }
     }
 
     clearDoneBtn.hidden = done.length === 0;
     countsEl.innerHTML = pending.length + " pendiente" + (pending.length === 1 ? "" : "s") +
       (done.length ? ' · <b>' + done.length + "</b> comprado" + (done.length === 1 ? "" : "s") : "");
+  }
+
+  function renderSectionLabel(name, count) {
+    var li = document.createElement("li");
+    li.className = "section-label";
+    li.textContent = name + " · " + count;
+    return li;
   }
 
   function renderItem(it) {
